@@ -9,6 +9,7 @@ ContainerName=meshforge
 Network=arr-network
 PublishPort=127.0.0.1:3020:3020
 PodmanArgs=--security-opt label=disable
+Volume=meshforge-data:/data
 Environment=TZ=Africa/Johannesburg
 
 [Service]
