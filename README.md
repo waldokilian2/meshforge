@@ -13,6 +13,10 @@ Server-side port of the approach used by [ChesterTheCatt/meshy-ai-to-stl](https:
 
 Public community models work out of the box. Private / draft models require Meshy login and are not reachable.
 
+## File storage
+
+Converted files persist to `/data` in the container. The UI lists all stored files with per-file delete; files auto-purge after 7 days.
+
 ## Setup
 
 Requirements: Node.js 20+ (tested on 22), curl.
