@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MeshForge</title>
+<style>
+  :root {
+    --bg: #0c0e11;
+    --panel: rgba(18, 22, 28, 0.72);
+    --border: #232a33;
+    --text: #e6e9ee;
+    --muted: #8a93a0;
+    --accent: #8ab4d8;
+    --accent-dim: #5d7f9d;
+    --error: #d88a8a;
+    --ok: #8ad8a8;
+    --mono: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    font-family: var(--mono);
+    color: var(--text);
+    background:
+      radial-gradient(1200px 800px at 70% -10%, rgba(138, 180, 216, 0.06), transparent 60%),
+      radial-gradient(900px 700px at 10% 110%, rgba(138, 216, 168, 0.04), transparent 55%),
+      var(--bg);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 48px 20px 32px;
+  }
+  header { width: 100%; max-width: 640px; margin-bottom: 28px; }
+  h1 {
+    font-size: 22px;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    margin: 0 0 6px;
+  }
+  h1 span { color: var(--accent); }
+  .sub { color: var(--muted); font-size: 12.5px; line-height: 1.6; }
+  .panel {
+    width: 100%;
+    max-width: 640px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px;
+    backdrop-filter: blur(8px);
+  }
+  label { display: block; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); margin: 0 0 8px; }
+  input[type="url"] {
+    width: 100%;
+    background: rgba(10, 12, 15, 0.6);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    font: inherit;
+    font-size: 14px;
+    padding: 12px 14px;
+    outline: none;
+    transition: border-color 160ms ease;
+  }
+  input[type="url"]:focus { border-color: var(--accent-dim); }
+  .formats { display: flex; gap: 8px; margin: 18px 0 20px; }
+  .fmt {
+    flex: 1;
+    text-align: center;
+    padding: 10px 0;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--muted);
+    font-size: 13px;
+    letter-spacing: 0.08em;
+    cursor: pointer;
+    user-select: none;
+    transition: border-color 160ms ease, color 160ms ease, background 160ms ease;
+  }
+  .fmt:hover { border-color: var(--accent-dim); }
+  .fmt.active { border-color: var(--accent); color: var(--accent); background: rgba(138, 180, 216, 0.07); }
+  button.go {
+    width: 100%;
+    background: rgba(138, 180, 216, 0.12);
+    border: 1px solid var(--accent-dim);
+    border-radius: 8px;
+    color: var(--accent);
+    font: inherit;
+    font-size: 14px;
+    letter-spacing: 0.1em;
+    padding: 12px;
+    cursor: pointer;
+    transition: background 160ms ease, border-color 160ms ease;
+  }
+  button.go:hover:not(:disabled) { background: rgba(138, 180, 216, 0.2); border-color: var(--accent); }
+  button.go:disabled { opacity: 0.45; cursor: wait; }
+  .status {
+    margin-top: 18px;
+    font-size: 12.5px;
+    line-height: 1.7;
+    color: var(--muted);
+    min-height: 1.7em;
+    white-space: pre-wrap;
+  }
+  .status.error { color: var(--error); }
+  .status.ok { color: var(--ok); }
+  .dl {
+    display: inline-block;
+    margin-top: 10px;
+    color: var(--accent);
+    border: 1px solid var(--accent-dim);
+    border-radius: 8px;
+    padding: 10px 18px;
+    text-decoration: none;
+    font-size: 13px;
+    letter-spacing: 0.08em;
+    animation: pop 240ms ease;
+  }
+  @keyframes pop {
+    from { transform: scale(0.96); opacity: 0; }
+    to { transform: scale(1); opacity: 1; }
+  }
+  footer {
+    margin-top: auto;
+    padding-top: 40px;
+    color: var(--muted);
+    font-size: 10px;
+    letter-spacing: 0.3em;
+    text-transform: uppercase;
+  }
+</style>
+</head>
+<body>
+  <header>
+    <h1>Mesh<span>Forge</span></h1>
+    <div class="sub">Paste a meshy.ai model page link. The server fetches the encrypted model,
+    decodes it, and hands you a real STL / OBJ / GLB file.</div>
+  </header>
+
+  <div class="panel">
+    <label for="url">Meshy model URL</label>
+    <input type="url" id="url" placeholder="https://www.meshy.ai/3d-models/..." spellcheck="false" autocomplete="off">
+
+    <div class="formats" id="formats">
+      <div class="fmt active" data-fmt="stl">STL</div>
+      <div class="fmt" data-fmt="obj">OBJ</div>
+      <div class="fmt" data-fmt="glb">GLB</div>
+    </div>
+
+    <button class="go" id="go">FORGE</button>
+    <div class="status" id="status"></div>
+  </div>
+
+  <footer>Self-hosted · LAN only</footer>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const statusEl = $("status");
+  const goBtn = $("go");
+  let format = "stl";
+  let pollTimer = null;
+
+  document.querySelectorAll(".fmt").forEach((el) => {
+    el.addEventListener("click", () => {
+      document.querySelectorAll(".fmt").forEach((e) => e.classList.remove("active"));
+      el.classList.add("active");
+      format = el.dataset.fmt;
+    });
+  });
+
+  function setStatus(text, cls) {
+    statusEl.textContent = text;
+    statusEl.className = "status" + (cls ? " " + cls : "");
+  }
+
+  function poll(jobId, started) {
+    clearTimeout(pollTimer);
+    fetch(`/api/job/${jobId}`)
+      .then((r) => r.json())
+      .then((j) => {
+        const elapsed = ((Date.now() - started) / 1000).toFixed(1);
+        if (j.status === "done") {
+          goBtn.disabled = false;
+          setStatus(`done in ${elapsed}s`, "ok");
+          const a = document.createElement("a");
+          a.className = "dl";
+          a.href = `/api/download/${jobId}`;
+          a.textContent = `⬇ ${j.name}`;
+          statusEl.appendChild(document.createElement("br"));
+          statusEl.appendChild(a);
+          return;
+        }
+        if (j.status === "error") {
+          goBtn.disabled = false;
+          return setStatus(`error: ${j.error}`, "error");
+        }
+        const stage = { resolving: "resolving meshy link", downloading: "downloading model", decoding: "decoding + converting" }[j.status] || j.status;
+        setStatus(`${stage}… (${elapsed}s)`);
+        pollTimer = setTimeout(() => poll(jobId, started), 600);
+      })
+      .catch(() => {
+        goBtn.disabled = false;
+        setStatus("connection lost", "error");
+      });
+  }
+
+  goBtn.addEventListener("click", () => {
+    const url = $("url").value.trim();
+    if (!url) return setStatus("paste a meshy.ai model link first", "error");
+    goBtn.disabled = true;
+    setStatus("starting…");
+    fetch("/api/convert", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url, format }),
+    })
+      .then(async (r) => {
+        const data = await r.json();
+        if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+        poll(data.jobId, Date.now());
+      })
+      .catch((err) => {
+        goBtn.disabled = false;
+        setStatus(err.message, "error");
+      });
+  });
+
+  $("url").addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !goBtn.disabled) goBtn.click();
+  });
+</script>
+</body>
+</html>

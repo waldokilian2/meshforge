@@ -1,0 +1,4 @@
+node_modules/
+vendor/mesh_loader.js
+vendor/mesh_loader.wasm
+*.log

@@ -1,0 +1,19 @@
+[Unit]
+Description=MeshForge - Meshy AI model to STL/OBJ/GLB converter
+Wants=network-online.target
+After=network-online.target
+
+[Container]
+Image=localhost/meshforge:latest
+ContainerName=meshforge
+Network=arr-network
+PublishPort=127.0.0.1:3020:3020
+PodmanArgs=--security-opt label=disable
+Environment=TZ=Africa/Johannesburg
+
+[Service]
+Restart=always
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target
