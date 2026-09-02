@@ -105,6 +105,48 @@
   }
   .status.error { color: var(--error); }
   .status.ok { color: var(--ok); }
+  .files {
+    width: 100%;
+    max-width: 640px;
+    margin-top: 20px;
+  }
+  .files-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 10px;
+  }
+  .files-header .label { font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); }
+  .files-header .count { font-size: 11px; color: var(--muted); }
+  .file-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 14px;
+    margin-bottom: 6px;
+    font-size: 12.5px;
+    animation: pop 240ms ease;
+  }
+  .file-row .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .file-row .meta { color: var(--muted); font-size: 11px; white-space: nowrap; }
+  .file-row a { color: var(--accent); text-decoration: none; border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px; }
+  .file-row a:hover { border-color: var(--accent-dim); }
+  .file-row button {
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--error);
+    font: inherit;
+    font-size: 11px;
+    padding: 4px 10px;
+    cursor: pointer;
+    transition: border-color 160ms ease;
+  }
+  .file-row button:hover { border-color: var(--error); }
+  .empty { color: var(--muted); font-size: 12px; padding: 8px 2px; }
   .dl {
     display: inline-block;
     margin-top: 10px;
@@ -152,6 +194,14 @@
     <div class="status" id="status"></div>
   </div>
 
+  <div class="files" id="files">
+    <div class="files-header">
+      <span class="label">Downloaded files</span>
+      <span class="count" id="files-count"></span>
+    </div>
+    <div id="file-list"></div>
+  </div>
+
   <footer>Self-hosted · LAN only</footer>
 
 <script>
@@ -189,6 +239,7 @@
           a.textContent = `⬇ ${j.name}`;
           statusEl.appendChild(document.createElement("br"));
           statusEl.appendChild(a);
+          loadFiles();
           return;
         }
         if (j.status === "error") {
@@ -229,6 +280,61 @@
   $("url").addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !goBtn.disabled) goBtn.click();
   });
+
+  // ----- files section -----
+  function fmtSize(n) {
+    if (n > 1024 * 1024) return (n / 1024 / 1024).toFixed(1) + " MB";
+    if (n > 1024) return (n / 1024).toFixed(0) + " KB";
+    return n + " B";
+  }
+  function fmtAge(t) {
+    const d = Date.now() - t;
+    const days = Math.floor(d / 86400000);
+    if (days > 0) return `${days}d ago`;
+    const hours = Math.floor(d / 3600000);
+    if (hours > 0) return `${hours}h ago`;
+    return `${Math.max(1, Math.floor(d / 60000))}m ago`;
+  }
+
+  function loadFiles() {
+    fetch("/api/files")
+      .then((r) => r.json())
+      .then(({ files }) => {
+        const list = $("file-list");
+        list.textContent = "";
+        $("files-count").textContent = files.length ? `${files.length} file${files.length > 1 ? "s" : ""}` : "auto-purged after 7 days";
+        if (!files.length) {
+          const e = document.createElement("div");
+          e.className = "empty";
+          e.textContent = "nothing forged yet";
+          list.appendChild(e);
+          return;
+        }
+        for (const f of files) {
+          const row = document.createElement("div");
+          row.className = "file-row";
+          const name = document.createElement("span");
+          name.className = "name";
+          name.textContent = f.name;
+          name.title = f.name;
+          const meta = document.createElement("span");
+          meta.className = "meta";
+          meta.textContent = `${fmtSize(f.size)} · ${fmtAge(f.created)}`;
+          const dl = document.createElement("a");
+          dl.href = `/api/download/${f.id}`;
+          dl.textContent = "get";
+          const del = document.createElement("button");
+          del.textContent = "del";
+          del.addEventListener("click", () => {
+            fetch(`/api/files/${f.id}`, { method: "DELETE" }).then(loadFiles);
+          });
+          row.append(name, meta, dl, del);
+          list.appendChild(row);
+        }
+      });
+  }
+  loadFiles();
+
 </script>
 </body>
 </html>

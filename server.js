@@ -12,7 +12,37 @@ import { decodeMeshy, glbToBinaryStl, glbToObj, vendorStatus } from "./meshlib.j
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.MESHFORGE_PORT || 3020;
 const HOST = process.env.MESHFORGE_HOST || "0.0.0.0";
+const STORAGE = process.env.MESHFORGE_DATA || "/data";
 const MAX_BYTES = 200 * 1024 * 1024; // 200 MB cap on .meshy download
+const FILE_TTL_DAYS = 7;
+
+fs.mkdirSync(STORAGE, { recursive: true });
+
+const EXT = { stl: "stl", obj: "obj", glb: "glb" };
+
+function metaPath(id) { return path.join(STORAGE, `${id}.json`); }
+function filePath(id, ext) { return path.join(STORAGE, `${id}.${ext}`); }
+
+function readStoredFiles() {
+  const files = [];
+  for (const name of fs.readdirSync(STORAGE)) {
+    if (!name.endsWith(".json")) continue;
+    try {
+      files.push(JSON.parse(fs.readFileSync(path.join(STORAGE, name), "utf8")));
+    } catch { /* skip corrupt meta */ }
+  }
+  return files.sort((a, b) => b.created - a.created);
+}
+
+// Auto-purge files older than FILE_TTL_DAYS
+setInterval(() => {
+  const cutoff = Date.now() - FILE_TTL_DAYS * 24 * 60 * 60 * 1000;
+  for (const meta of readStoredFiles()) {
+    if (meta.created < cutoff) {
+      try { fs.rmSync(filePath(meta.id, meta.ext), { force: true }); fs.rmSync(metaPath(meta.id), { force: true }); } catch {}
+    }
+  }
+}, 60 * 60 * 1000).unref();
 
 // ---------- helpers ----------
 
@@ -102,16 +132,9 @@ function safeName(input, ext) {
   return `${base}.${ext}`;
 }
 
-// ---------- job store (simple in-memory cache of finished conversions) ----------
+// ---------- job store (in-progress conversions only; finished files persist to disk) ----------
 
-const jobs = new Map(); // jobId -> { status, format, name, buffer?, error?, created }
-const JOB_TTL = 30 * 60 * 1000; // 30 min
-setInterval(() => {
-  const now = Date.now();
-  for (const [id, job] of jobs) {
-    if (now - job.created > JOB_TTL) jobs.delete(id);
-  }
-}, 60 * 1000).unref();
+const jobs = new Map(); // jobId -> { status, format, name, error?, created }
 
 async function runJob(jobId, meshyUrl, format, slug) {
   const job = jobs.get(jobId);
@@ -121,20 +144,28 @@ async function runJob(jobId, meshyUrl, format, slug) {
     job.status = "decoding";
     let out;
     if (format === "glb") {
-      const glb = await decodeMeshy(buf);
-      out = { main: glb, extra: [] };
+      out = await decodeMeshy(buf);
     } else if (format === "stl") {
-      const glb = await decodeMeshy(buf);
-      out = { main: glbToBinaryStl(glb), extra: [] };
+      out = glbToBinaryStl(await decodeMeshy(buf));
     } else if (format === "obj") {
-      const glb = await decodeMeshy(buf);
-      out = { main: glbToObj(glb), extra: [] };
+      out = glbToObj(await decodeMeshy(buf));
     } else {
       throw new Error("Unsupported format");
     }
+    const ext = EXT[format];
+    fs.writeFileSync(filePath(jobId, ext), out);
+    const meta = {
+      id: jobId,
+      name: safeName(slug, format),
+      ext,
+      size: out.length,
+      source: String(slug || ""),
+      created: Date.now(),
+    };
+    fs.writeFileSync(metaPath(jobId), JSON.stringify(meta));
     job.status = "done";
-    job.buffer = out.main;
-    job.name = safeName(slug, format);
+    job.name = meta.name;
+    job.id = jobId;
   } catch (err) {
     job.status = "error";
     job.error = err.message || String(err);
@@ -158,6 +189,20 @@ async function handler(req, res) {
 
     if (req.method === "GET" && p === "/health") {
       return json(res, 200, { ok: true, vendor: await vendorStatus(), jobs: jobs.size });
+    }
+
+    if (req.method === "GET" && p === "/api/files") {
+      return json(res, 200, { files: readStoredFiles() });
+    }
+
+    if (req.method === "DELETE" && p.startsWith("/api/files/")) {
+      const id = path.basename(p).replace(/\.(json|stl|obj|glb)$/, "");
+      const metaFile = metaPath(id);
+      if (!fs.existsSync(metaFile)) return json(res, 404, { error: "unknown file" });
+      const meta = JSON.parse(fs.readFileSync(metaFile, "utf8"));
+      fs.rmSync(filePath(id, meta.ext), { force: true });
+      fs.rmSync(metaFile, { force: true });
+      return json(res, 200, { ok: true });
     }
 
     if (req.method === "POST" && p === "/api/convert") {
@@ -193,15 +238,30 @@ async function handler(req, res) {
     }
 
     if (req.method === "GET" && p.startsWith("/api/download/")) {
-      const jobId = p.slice("/api/download/".length);
-      const job = jobs.get(jobId);
-      if (!job) return json(res, 404, { error: "unknown job" });
-      if (job.status !== "done") return json(res, 409, { error: `job is ${job.status}` });
-      return send(res, 200, job.buffer, {
-        "Content-Type": "application/octet-stream",
-        "Content-Disposition": `attachment; filename="${job.name}"`,
-        "Content-Length": job.buffer.length,
-      });
+      const id = path.basename(p);
+      // Live job…
+      const job = jobs.get(id);
+      if (job && job.status === "done") {
+        const meta = JSON.parse(fs.readFileSync(metaPath(id), "utf8"));
+        const buf = fs.readFileSync(filePath(id, meta.ext));
+        return send(res, 200, buf, {
+          "Content-Type": "application/octet-stream",
+          "Content-Disposition": `attachment; filename="${meta.name}"`,
+          "Content-Length": buf.length,
+        });
+      }
+      // …or persisted file.
+      const metaFile = metaPath(id);
+      if (fs.existsSync(metaFile)) {
+        const meta = JSON.parse(fs.readFileSync(metaFile, "utf8"));
+        const buf = fs.readFileSync(filePath(id, meta.ext));
+        return send(res, 200, buf, {
+          "Content-Type": "application/octet-stream",
+          "Content-Disposition": `attachment; filename="${meta.name}"`,
+          "Content-Length": buf.length,
+        });
+      }
+      return json(res, 404, { error: "unknown job" });
     }
 
     return json(res, 404, { error: "not found" });
