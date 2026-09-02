@@ -1,0 +1,15 @@
+services:
+  meshforge:
+    build: .
+    image: meshforge:latest
+    container_name: meshforge
+    restart: unless-stopped
+    ports:
+      - "3020:3020"
+    volumes:
+      - meshforge-data:/data
+    environment:
+      - TZ=UTC
+
+volumes:
+  meshforge-data:
